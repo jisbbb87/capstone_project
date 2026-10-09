@@ -1,0 +1,205 @@
+---
+title: "Capstone Analysis"
+author: "Jishnu Sathees Lalu"
+date: "today"
+format: html
+---
+
+## Load packages
+
+```{r}
+library(readxl)
+library(dplyr)
+library(writexl)
+library(ggplot2)
+library(tidyr)
+```
+
+## Import the data
+
+The data are read from the Excel file
+
+```{r}
+tb <- read_excel("~/Desktop/Research/R classes/Capstone Project/clinical parameters_TBpatients.xlsx")
+```
+
+##Bring the date of assessment column first and rename it to "Start"
+
+```{r}
+tb <- tb |> rename(start=`Date of Assessment`)
+tb <- tb |> relocate(start,.before = end)
+```
+
+##create a unique ID from row ID
+```{r}
+tb <- tb |> mutate(id=row_number(),.before = 1)
+```
+
+##find mean age. Replace any missing value with mean
+```{r}
+mean(tb$Age)
+sum(is.na(tb$Age))
+which(is.na(tb$Age))
+tb <- tb |> mutate(Age=ifelse(is.na(Age), mean(Age, na.rm=TRUE), Age))
+round(mean(tb$Age),2)
+t.test(tb$Age)$conf.int
+round(t.test(tb$Age)$conf.int,2)
+```
+Mean age of the study population was found to be 32.27 years with 95% CI (30.99 - 33.56 years)
+
+##find the mean delay in assessment. Replace any missing value
+```{r}
+sum(is.na(tb$start))
+sum(is.na(tb$end))
+tb <- tb |> mutate(delay=as.numeric(as.Date(end)-as.Date(start)))
+mean(tb$delay, na.rm=TRUE)
+round(mean(tb$delay),2)
+round(t.test(tb$delay)$conf.int,2)
+```
+The mean delay in assessment for TB among the participants was estimated to be 8.26 days with 95% CI (7.69 days - 8.84 days).
+
+##create a stacked coloumn chart of number of patients by district and gender
+```{r}
+library(ggplot2)
+ggplot(tb, aes(x=District, fill =Gender)) + geom_bar() + labs(little = "Number of TB patients by district and gender", x = "District", y="Number of patients", fill = "Gender") + theme_minimal()
+```
+
+##comment on whether age follows a normal distribution or not.
+```{r}
+hist(tb$Age)
+shapiro.test(tb$Age)
+mean(tb$Age)
+round(mean(tb$Age),2)
+median(tb$Age)
+```
+The histogram is skewed to the right. Shapiro test showed p <0.05
+mean = 32.27 and median= 28
+The variable age showed a non- normal distribution. 
+
+##Stratify the number of abnormal parameters as low risk (1), moderate risk (2-3) and high risk (4 and greater than 4)
+```{r}
+tb <- tb |> mutate(risk = case_when(
+  `No of Abnormal parameters`== 0 ~"No abnormal parameter",
+  `No of Abnormal parameters`== 1 ~ "Low risk",
+  `No of Abnormal parameters` <=3 ~ "Moderate risk",
+  `No of Abnormal parameters`>= 4 ~ "High risk"
+  )) |> 
+  mutate (risk = factor(risk, levels = c("No abnormal parameter","Low risk", "Moderate risk","High risk")))
+table(tb$risk)
+sum(is.na(tb$risk))
+round(prop.table(table(tb$risk))*100,2)
+```
+##Cross-Tabulate and find out the number of persons stratified by Medical Officer as being in low-risk despite the number of abnormal parameters being in high risk. 
+```{r}
+tb <- tb |> 
+  mutate(mo_risk = case_when(
+    grepl("^Low",`Final risk stratification BY THE MEDICAL OFFICER`) ~ "MO: Low",
+    grepl("^Moderate",`Final risk stratification BY THE MEDICAL OFFICER`)~ "MO: Moderate",
+    grepl("^High",`Final risk stratification BY THE MEDICAL OFFICER`)~ "MO: High"
+  ))  |> 
+    mutate(mo_risk = factor(mo_risk, levels = c("MO: Low","MO: Moderate","MO: High")))
+table(tb$risk, tb$mo_risk, useNA="ifany")
+sum(tb$risk =="High risk" & tb$mo_risk == "MO: Low", na.rm = TRUE)
+```
+The number of persons stratified by Medical Officer as being in low-risk despite the number of abnormal parameters being in high risk was 185.
+
+##Create a descending order column chart showing number of persons having abnormal respiratory rate, bmi, haemoglobin and oxygen saturation
+```{r}
+abn <- tb |> 
+  summarise(`Respiratory rate` =sum(`Respiratory rate`==1),
+    BMI = sum(BMI ==1),
+    Haemoglobin =sum(Haemoglobin == 1),
+    `Oxygen saturation`= sum(`Oxygen saturation` == 1)) |> pivot_longer(everything(), names_to = "parameter", values_to = "n")
+
+ggplot(abn, aes(x= reorder(parameter, -n), y=n)) + geom_col(fill = "seagreen") + geom_text(aes(label=n), vjust = -0.4)+ labs(title ="Patients with abnormal clinical parameters", x = "Parameter", y = "Number of patients") + theme_minimal()
+```
+##Create a subset of data set who are males and do not have blood in sputum
+
+```{r}
+Males_no_blood_sputum <- tb |> filter(Gender == "Male", `Blood in sputum`==0)
+nrow(Males_no_blood_sputum)
+```
+There are 269 male participants who donot have blood in sputum.
+
+##Anything else you want to report in this dataset. 
+
+```{r}
+tb <- tb |> 
+  rename(no_abnormal_para =`No of Abnormal parameters`) |> 
+  mutate(
+    Gender = factor(Gender),
+    District = factor(District),
+    age_group = cut(Age,
+                    breaks = c(0,14,29,44,59, Inf),
+                    labels = c("0-14", "15-29", "30-44", "45-59", "60+"))
+  )
+table(tb$no_abnormal_para, tb$age_group)
+```
+
+##frequency table with percentages
+```{r}
+freq <- function(x) {
+  t <- table(x, useNA = "ifany")
+  data.frame(category = names(t),
+  n = as.vector(t),
+  percent = round(100* as.vector(prop.table(t)),1))
+}
+```
+##Coulmns coded 1 = present/abnormal, 0= absent/normal
+
+```{r}
+symptoms <- c("Cough" = "Current symptoms /Cough",
+    "Persistent fever" = "Current symptoms /Persistent fever",
+    "Breathlessness" = "Current symptoms /Breathlessness",
+    "Loss of weight" = "Current symptoms /Loss of weight",
+    "Loss of appetite" = "Current symptoms /Loss of appetite",
+    "Evening rise of temperature" = "Current symptoms /Evening rise of temperature",
+    "Blood in sputum" = "Blood in sputum")
+params <- c("BMI" = "BMI",
+            "Haemoglobin" = "Haemoglobin",
+            "SpO2" =  "SpO2",
+            "RBS" = "RBS",
+            "HIV" = "HIV",
+            "Chest X-ray" = "Chest X-ray")
+```
+Distribution of study population as per Age, Gender and Location
+
+```{r}
+summary(tb$Age)
+freq(tb$age_group)
+freq(tb$Gender)
+freq(tb$District)
+```
+##Distribution of Symptomatology
+```{r}
+sym_tab <- data.frame(
+  symptom = names(symptoms),
+  count = sapply (symptoms, function(v) sum(tb[[v]]==1)), 
+  row.names =NULL
+) |> 
+  mutate(percent = round(100* count/ nrow(tb), 1)) |> 
+  arrange(desc(count))
+sym_tab
+```
+##Bivariate analysis of Delay in assessment and number of abnormal parameters by gender and district
+```{r}
+tb |> group_by(Gender) |> 
+  summarise(n=n(),
+            median_delay = median(delay), iqr_delay = IQR(delay),
+            median_abn = median(no_abnormal_para), iqr_abn = IQR(no_abnormal_para)) 
+tb |> group_by(Gender) |> 
+  summarise(n=n(),
+            median_delay = median(delay), iqr_delay = IQR(delay),
+            median_abn = median(no_abnormal_para), iqr_abn = IQR(no_abnormal_para))
+tb |> group_by(District) |> 
+  summarise(n=n(),
+            median_delay = median(delay), iqr_delay = IQR(delay),
+            median_abn = median(no_abnormal_para), iqr_abn = IQR(no_abnormal_para))
+wilcox.test(delay~Gender, data = tb)
+wilcox.test(no_abnormal_para~Gender, data = tb)
+kruskal.test(delay~District, data = tb)
+kruskal.test(no_abnormal_para~District, data = tb)
+ggplot(tb, aes(x= District, y= delay)) +
+  geom_boxplot(fill ="steelblue", alpha =0.6) +
+  labs(title = "Distribution as per Delay in assessment and district", y="Delay(days)") + theme_minimal()
+```
